@@ -16,13 +16,9 @@ TABLE_NAME = "workspace.default.resumes_clean"
 TOKEN_PATTERN = r"[A-Za-z][A-Za-z0-9+#]+"
 PDF_FOLDER = Path("resumes_pdf")
 
-# Environment variables override these defaults if they are set.
-DATABRICKS_HOST = os.environ.get(
-    "DATABRICKS_SERVER_HOSTNAME", "dbc-796f3bee-f198.cloud.databricks.com"
-)
-DATABRICKS_HTTP_PATH = os.environ.get(
-    "DATABRICKS_HTTP_PATH", "/sql/1.0/warehouses/e33124372ddd7ee7"
-)
+# Defaults. Streamlit Secrets or environment variables override these.
+DEFAULT_HOST = "dbc-796f3bee-f198.cloud.databricks.com"
+DEFAULT_HTTP_PATH = "/sql/1.0/warehouses/e33124372ddd7ee7"
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
 st.markdown(
@@ -185,33 +181,76 @@ st.markdown(
 )
 
 
-# ---------- Helpers ----------
+# ---------- Databricks settings ----------
+def read_setting(name, default=None):
+    """Read a value from Streamlit Secrets first, then environment variables."""
+    try:
+        value = st.secrets[name]
+    except Exception:
+        value = os.environ.get(name)
+    if value is None or str(value).strip() == "":
+        return default
+    return str(value)
+
+
+def clean_token(raw):
+    """Remove quotes, spaces, line breaks and a 'Bearer ' prefix from the token."""
+    if not raw:
+        return None
+    raw = str(raw)
+    match = re.search(r"dapi[A-Za-z0-9\-]+", raw)  # standard personal access token
+    if match:
+        return match.group(0)
+    cleaned = re.sub(r"^\s*Bearer\s+", "", raw, flags=re.IGNORECASE)
+    return re.sub(r"[\s\"']+", "", cleaned) or None
+
+
+def clean_host(raw):
+    host = str(raw).strip()
+    host = re.sub(r"^https?://", "", host, flags=re.IGNORECASE)
+    return host.split("/")[0].strip()
+
+
+def get_databricks_settings():
+    host = clean_host(read_setting("DATABRICKS_SERVER_HOSTNAME", DEFAULT_HOST))
+    http_path = read_setting("DATABRICKS_HTTP_PATH", DEFAULT_HTTP_PATH).strip()
+    token = clean_token(read_setting("DATABRICKS_TOKEN"))
+    return host, http_path, token
+
+
+def check_token(host, token):
+    """Ask Databricks whether it accepts the token. Returns (ok, message)."""
+    try:
+        import requests
+
+        response = requests.get(
+            f"https://{host}/api/2.0/preview/scim/v2/Me",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=20,
+        )
+    except Exception:
+        return True, ""  # network problem: let the SQL connector try anyway
+    if response.status_code in (401, 403):
+        return False, (
+            f"Databricks rejected the token (HTTP {response.status_code}). "
+            f"Create a new token in the workspace {host} and save it as "
+            "DATABRICKS_TOKEN in Streamlit Secrets, then reboot the app."
+        )
+    return True, ""
+
+
 @st.cache_resource
 def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 
-def get_databricks_token():
-    """Read the token from Streamlit Secrets, or from an environment variable."""
-    try:
-        return st.secrets["DATABRICKS_TOKEN"]
-    except Exception:
-        return os.environ.get("DATABRICKS_TOKEN")
-
-
 @st.cache_data(ttl=600, show_spinner=False)
-def load_databricks_resumes():
+def load_databricks_resumes(host, http_path, token):
     from databricks import sql
 
-    token = get_databricks_token()
-    if not token:
-        raise RuntimeError(
-            "DATABRICKS_TOKEN is missing. Add it in Streamlit Secrets."
-        )
-
     with sql.connect(
-        server_hostname=DATABRICKS_HOST,
-        http_path=DATABRICKS_HTTP_PATH,
+        server_hostname=host,
+        http_path=http_path,
         access_token=token,
         _socket_timeout=120,
     ) as connection:
@@ -222,6 +261,7 @@ def load_databricks_resumes():
     return pd.DataFrame([list(r) for r in rows], columns=columns)
 
 
+# ---------- Scoring helpers ----------
 def extract_keywords(job_description, max_keywords=40):
     vectorizer = CountVectorizer(
         stop_words="english", lowercase=True, token_pattern=TOKEN_PATTERN
@@ -314,13 +354,43 @@ if source == "Upload CSV":
     if uploaded is not None:
         st.session_state["df"] = pd.read_csv(uploaded)
 else:
+    db_host, db_http_path, db_token = get_databricks_settings()
+
+    with st.expander("Connection details (no secrets shown)"):
+        st.write("Host:", db_host)
+        st.write("HTTP path:", db_http_path)
+        if db_token:
+            st.write(
+                f"Token: found, {len(db_token)} characters, starts with '{db_token[:4]}'"
+            )
+            if not db_token.startswith("dapi"):
+                st.warning("A Databricks personal access token normally starts with 'dapi'.")
+        else:
+            st.write("Token: NOT FOUND in Streamlit Secrets")
+
     if st.button("Connect & Load Resumes"):
-        with st.spinner("Connecting to Databricks..."):
-            try:
-                st.session_state["df"] = load_databricks_resumes()
-                st.success(f"Loaded {len(st.session_state['df'])} resumes")
-            except Exception as exc:
-                st.error(f"Databricks error: {exc}")
+        if not db_token:
+            st.error(
+                "DATABRICKS_TOKEN is missing. In Streamlit open Manage app > "
+                "Settings > Secrets and add: DATABRICKS_TOKEN = \"dapi...\""
+            )
+        else:
+            with st.spinner("Connecting to Databricks..."):
+                ok, message = check_token(db_host, db_token)
+                if not ok:
+                    st.error(message)
+                else:
+                    try:
+                        st.session_state["df"] = load_databricks_resumes(
+                            db_host, db_http_path, db_token
+                        )
+                        st.success(f"Loaded {len(st.session_state['df'])} resumes")
+                    except Exception as exc:
+                        st.error(
+                            "The token is valid, but the SQL warehouse connection failed. "
+                            "Check that the warehouse is running and that the HTTP path "
+                            f"and table name are correct.\n\nDetails: {exc}"
+                        )
 
 df = st.session_state.get("df")
 
