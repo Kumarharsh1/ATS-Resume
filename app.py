@@ -191,13 +191,29 @@ def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 
+def get_databricks_token():
+    """Read the token from Streamlit Secrets, or from an environment variable."""
+    try:
+        return st.secrets["DATABRICKS_TOKEN"]
+    except Exception:
+        return os.environ.get("DATABRICKS_TOKEN")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def load_databricks_resumes():
     from databricks import sql
+
+    token = get_databricks_token()
+    if not token:
+        raise RuntimeError(
+            "DATABRICKS_TOKEN is missing. Add it in Streamlit Secrets."
+        )
 
     with sql.connect(
         server_hostname=DATABRICKS_HOST,
         http_path=DATABRICKS_HTTP_PATH,
-        auth_type="databricks-oauth",
+        access_token=token,
+        _socket_timeout=120,
     ) as connection:
         with connection.cursor() as cursor:
             cursor.execute(f"SELECT * FROM {TABLE_NAME} LIMIT 1000")
