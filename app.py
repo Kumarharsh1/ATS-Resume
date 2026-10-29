@@ -217,6 +217,10 @@ def get_databricks_settings():
     token = clean_token(read_setting("DATABRICKS_TOKEN"))
     return host, http_path, token
 
+db_host, db_http_path, db_token = get_databricks_settings()
+
+
+
 
 def check_token(host, token):
     """Ask Databricks whether it accepts the token. Returns (ok, message)."""
@@ -244,22 +248,27 @@ def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600)
 def load_databricks_resumes(host, http_path, token):
     from databricks import sql
 
-    with sql.connect(
+    connection = sql.connect(
         server_hostname=host,
         http_path=http_path,
-        access_token=token,
-        _socket_timeout=120,
-    ) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {TABLE_NAME} LIMIT 1000")
-            columns = [item[0] for item in cursor.description]
-            rows = cursor.fetchall()
-    return pd.DataFrame([list(r) for r in rows], columns=columns)
+        access_token=token
+    )
 
+    query = """
+    SELECT *
+    FROM workspace.default.resumes_clean
+    LIMIT 1000
+    """
+
+    df = pd.read_sql(query, connection)
+
+    connection.close()
+
+    return df
 
 # ---------- Scoring helpers ----------
 def extract_keywords(job_description, max_keywords=40):
@@ -351,46 +360,30 @@ source = st.radio("Resume source", ["Upload CSV", "Load from Databricks"], horiz
 
 if source == "Upload CSV":
     uploaded = st.file_uploader("Upload Resume CSV", type=["csv"])
+
     if uploaded is not None:
         st.session_state["df"] = pd.read_csv(uploaded)
+
 else:
     db_host, db_http_path, db_token = get_databricks_settings()
 
-    with st.expander("Connection details (no secrets shown)"):
-        st.write("Host:", db_host)
-        st.write("HTTP path:", db_http_path)
-        if db_token:
-            st.write(
-                f"Token: found, {len(db_token)} characters, starts with '{db_token[:4]}'"
-            )
-            if not db_token.startswith("dapi"):
-                st.warning("A Databricks personal access token normally starts with 'dapi'.")
-        else:
-            st.write("Token: NOT FOUND in Streamlit Secrets")
-
     if st.button("Connect & Load Resumes"):
-        if not db_token:
-            st.error(
-                "DATABRICKS_TOKEN is missing. In Streamlit open Manage app > "
-                "Settings > Secrets and add: DATABRICKS_TOKEN = \"dapi...\""
+        try:
+            st.session_state["df"] = load_databricks_resumes(
+                db_host,
+                db_http_path,
+                db_token
             )
-        else:
-            with st.spinner("Connecting to Databricks..."):
-                ok, message = check_token(db_host, db_token)
-                if not ok:
-                    st.error(message)
-                else:
-                    try:
-                        st.session_state["df"] = load_databricks_resumes(
-                            db_host, db_http_path, db_token
-                        )
-                        st.success(f"Loaded {len(st.session_state['df'])} resumes")
-                    except Exception as exc:
-                        st.error(
-                            "The token is valid, but the SQL warehouse connection failed. "
-                            "Check that the warehouse is running and that the HTTP path "
-                            f"and table name are correct.\n\nDetails: {exc}"
-                        )
+
+            st.success(
+                f"Loaded {len(st.session_state['df'])} resumes"
+            )
+
+        except Exception as exc:
+            st.error(f"Databricks connection failed: {exc}")
+
+
+
 
 df = st.session_state.get("df")
 

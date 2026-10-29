@@ -1,7 +1,7 @@
 streamlit
 pandas
-sentence-transformers
 scikit-learn
-openpyxl
+sentence-transformers
 fpdf2
 databricks-sql-connector
+requests
