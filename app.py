@@ -225,6 +225,7 @@ def get_databricks_settings():
 
 db_host, db_http_path, db_token = get_databricks_settings()
 st.write("SECRET KEYS:", list(st.secrets.keys()))
+st.write(st.secrets)
 
 
 
