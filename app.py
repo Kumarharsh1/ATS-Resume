@@ -252,6 +252,15 @@ def load_model():
 def load_databricks_resumes(host, http_path, token):
     from databricks import sql
 
+    st.write("HOST:", host)
+    st.write("HTTP PATH:", http_path)
+
+    if token:
+        st.write("TOKEN START:", token[:4])
+        st.write("TOKEN LENGTH:", len(token))
+    else:
+        st.write("TOKEN IS NONE")
+
     connection = sql.connect(
         server_hostname=host,
         http_path=http_path,
