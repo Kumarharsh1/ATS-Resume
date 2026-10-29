@@ -194,15 +194,9 @@ def read_setting(name, default=None):
 
 
 def clean_token(raw):
-    """Remove quotes, spaces, line breaks and a 'Bearer ' prefix from the token."""
-    if not raw:
-        return None
-    raw = str(raw)
-    match = re.search(r"dapi[A-Za-z0-9\-]+", raw)  # standard personal access token
-    if match:
-        return match.group(0)
-    cleaned = re.sub(r"^\s*Bearer\s+", "", raw, flags=re.IGNORECASE)
-    return re.sub(r"[\s\"']+", "", cleaned) or None
+    return str(raw).strip() if raw else None
+
+
 
 
 def clean_host(raw):
@@ -212,22 +206,22 @@ def clean_host(raw):
 
 
 def get_databricks_settings():
-    host = clean_host(read_setting("DATABRICKS_SERVER_HOSTNAME", DEFAULT_HOST))
-    http_path = read_setting("DATABRICKS_HTTP_PATH", DEFAULT_HTTP_PATH).strip()
-    raw_token = read_setting("DATABRICKS_TOKEN")
+    host = clean_host(
+        read_setting("DATABRICKS_SERVER_HOSTNAME", DEFAULT_HOST)
+    )
 
-    st.write("RAW TOKEN START:", str(raw_token)[:10])
+    http_path = read_setting(
+        "DATABRICKS_HTTP_PATH",
+        DEFAULT_HTTP_PATH
+    ).strip()
 
-    token = clean_token(raw_token)
+    token = clean_token(
+        read_setting("DATABRICKS_TOKEN")
+    )
 
-    st.write("CLEAN TOKEN START:", str(token)[:10])
     return host, http_path, token
 
 db_host, db_http_path, db_token = get_databricks_settings()
-st.write("SECRET KEYS:", list(st.secrets.keys()))
-st.write(st.secrets)
-
-
 
 def check_token(host, token):
     """Ask Databricks whether it accepts the token. Returns (ok, message)."""
@@ -259,14 +253,7 @@ def load_model():
 def load_databricks_resumes(host, http_path, token):
     from databricks import sql
 
-    st.write("HOST:", host)
-    st.write("HTTP PATH:", http_path)
-
-    if token:
-        st.write("TOKEN START:", token[:4])
-        st.write("TOKEN LENGTH:", len(token))
-    else:
-        st.write("TOKEN IS NONE")
+    
 
     connection = sql.connect(
         server_hostname=host,
