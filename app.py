@@ -380,8 +380,10 @@ else:
             )
 
         except Exception as exc:
-            st.error(f"Databricks connection failed: {exc}")
+            import traceback
 
+            st.error(str(exc))
+            st.code(traceback.format_exc())
 
 
 
