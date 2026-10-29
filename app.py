@@ -214,11 +214,17 @@ def clean_host(raw):
 def get_databricks_settings():
     host = clean_host(read_setting("DATABRICKS_SERVER_HOSTNAME", DEFAULT_HOST))
     http_path = read_setting("DATABRICKS_HTTP_PATH", DEFAULT_HTTP_PATH).strip()
-    token = clean_token(read_setting("DATABRICKS_TOKEN"))
+    raw_token = read_setting("DATABRICKS_TOKEN")
+
+    st.write("RAW TOKEN START:", str(raw_token)[:10])
+
+    token = clean_token(raw_token)
+
+    st.write("CLEAN TOKEN START:", str(token)[:10])
     return host, http_path, token
 
 db_host, db_http_path, db_token = get_databricks_settings()
-
+st.write("SECRET KEYS:", list(st.secrets.keys()))
 
 
 
